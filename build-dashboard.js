@@ -141,6 +141,7 @@ const html = `<!DOCTYPE html>
       padding: 1.25rem 0;
       overflow-y: auto;
       max-height: 100vh;
+      transition: transform 0.2s ease, margin-left 0.2s ease;
     }
     .sidebar h2 {
       font-size: 0.75rem;
@@ -254,6 +255,27 @@ const html = `<!DOCTYPE html>
     }
     .empty-state p { margin-bottom: 0.5rem; }
     .header-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.5rem; }
+    .header-left { display: inline-flex; align-items: center; gap: 0.75rem; }
+    .sidebar-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    }
+    .sidebar-toggle:hover {
+      background: var(--surface-hover);
+      border-color: var(--accent);
+      transform: translateX(1px);
+    }
+    .sidebar-toggle span {
+      font-size: 1.1rem;
+      line-height: 1;
+    }
     .theme-toggle {
       display: inline-flex; align-items: center; gap: 0.5rem;
       padding: 0.5rem 0.85rem;
@@ -295,6 +317,10 @@ const html = `<!DOCTYPE html>
     .col-done { width: 2.5rem; text-align: center; vertical-align: middle; }
     .col-done input { cursor: pointer; accent-color: var(--accent); }
     .data-table tr.row-done .title { text-decoration: line-through; opacity: 0.7; }
+    body.sidebar-collapsed .sidebar {
+      margin-left: -280px;
+      border-right: none;
+    }
     @media (max-width: 900px) {
       .layout { flex-direction: column; }
       .sidebar { width: 100%; max-height: 240px; border-right: none; border-bottom: 1px solid var(--border); }
@@ -312,7 +338,12 @@ const html = `<!DOCTYPE html>
     </aside>
     <main class="main">
       <div class="header-row">
-        <h1 id="company-title">Select a company</h1>
+        <div class="header-left">
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="true">
+            <span>&#9776;</span>
+          </button>
+          <h1 id="company-title">Select a company</h1>
+        </div>
         <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
           <svg id="theme-icon-dark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 6 6c0 2.4-.9 4.6-2.4 6.2A9 9 0 0 1 12 21a9 9 0 0 1-5.6-2.1C4.9 13.6 4 11.4 4 9a6 6 0 0 0 6-6z"/></svg>
           <svg id="theme-icon-light" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -349,6 +380,44 @@ const html = `<!DOCTYPE html>
     const COMPANY_DATA = ${JSON.stringify(companies)};
     const COMPANY_NAMES = ${JSON.stringify(companyNames)};
 
+    const ALL_LABEL = 'All Problems';
+
+    function buildAllProblems() {
+      if (!COMPANY_NAMES.length) return;
+      const first = COMPANY_DATA[COMPANY_NAMES[0]];
+      if (!first) return;
+      const baseHeaders = first.headers || [];
+      const linkIdx = baseHeaders.indexOf('Link');
+      if (linkIdx === -1) return;
+      const agg = new Map();
+      COMPANY_NAMES.forEach((company) => {
+        const info = COMPANY_DATA[company];
+        if (!info || !info.data) return;
+        const headers = info.headers;
+        const lIdx = headers.indexOf('Link');
+        info.data.forEach(row => {
+          const link = row.Link != null ? row.Link : (lIdx >= 0 ? row[headers[lIdx]] : null);
+          if (!link) return;
+          let rec = agg.get(link);
+          if (!rec) {
+            rec = { ...row, Companies: [company] };
+            agg.set(link, rec);
+          } else {
+            if (!rec.Companies.includes(company)) rec.Companies.push(company);
+          }
+        });
+      });
+      const allHeaders = baseHeaders.includes('Companies') ? baseHeaders.slice() : [...baseHeaders, 'Companies'];
+      const allData = Array.from(agg.values()).map(r => ({
+        ...r,
+        Companies: Array.isArray(r.Companies) ? r.Companies.slice().sort().join(', ') : (r.Companies || '')
+      }));
+      COMPANY_DATA[ALL_LABEL] = { headers: allHeaders, data: allData };
+      if (!COMPANY_NAMES.includes(ALL_LABEL)) {
+        COMPANY_NAMES.splice(0, 0, ALL_LABEL);
+      }
+    }
+
     const searchEl = document.getElementById('search');
     const listEl = document.getElementById('company-list');
     const titleEl = document.getElementById('company-title');
@@ -359,6 +428,7 @@ const html = `<!DOCTYPE html>
     const themeIconDark = document.getElementById('theme-icon-dark');
     const themeIconLight = document.getElementById('theme-icon-light');
     const themeLabel = document.getElementById('theme-label');
+    const sidebarToggle = document.getElementById('sidebar-toggle');
     let currentCompany = null;
     let currentData = null;
     let currentHeaders = null;
@@ -371,6 +441,20 @@ const html = `<!DOCTYPE html>
       themeIconLight.style.display = saved === 'light' ? 'block' : 'none';
       themeLabel.textContent = saved === 'dark' ? 'Light' : 'Dark';
     }
+
+    function updateSidebarToggleAria() {
+      if (!sidebarToggle) return;
+      const collapsed = document.body.classList.contains('sidebar-collapsed');
+      sidebarToggle.setAttribute('aria-expanded', (!collapsed).toString());
+    }
+
+    function initSidebar() {
+      const saved = localStorage.getItem('dashboard-sidebar') || 'expanded';
+      if (saved === 'collapsed') {
+        document.body.classList.add('sidebar-collapsed');
+      }
+      updateSidebarToggleAria();
+    }
     themeToggle.addEventListener('click', () => {
       const isLight = document.body.classList.contains('theme-light');
       const next = isLight ? 'dark' : 'light';
@@ -382,6 +466,18 @@ const html = `<!DOCTYPE html>
       localStorage.setItem('dashboard-theme', next);
     });
     initTheme();
+
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener('click', () => {
+        const collapsed = document.body.classList.toggle('sidebar-collapsed');
+        localStorage.setItem('dashboard-sidebar', collapsed ? 'collapsed' : 'expanded');
+        updateSidebarToggleAria();
+      });
+    }
+    initSidebar();
+
+    // Build aggregated "All Problems" view once on load
+    buildAllProblems();
 
     const COMPLETED_KEY = 'dashboard-completed';
     function getCompletedSet() {
